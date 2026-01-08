@@ -39,3 +39,5 @@ datasets/
 # IDE
 .vscode/
 .idea/
+docs/CONVERSATION_TEMPLATE.md
+docs/local/
