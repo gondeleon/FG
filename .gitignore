@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.dist/
+build/
+dist/
+
+# Virtual envs
+.venv/
+venv/
+.env
+
+# Tooling
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project outputs / logs
+outputs/
+logs/
+*.log
+
+# Data (IMPORTANT)
+data/
+datasets/
+*.bag
+*.db3
+*.pcd
+*.las
+*.laz
+
+# IDE
+.vscode/
+.idea/

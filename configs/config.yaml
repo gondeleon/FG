@@ -1,0 +1,162 @@
+# slamboat config.yaml (Pose3 + IMU preintegration + GPS pose variable + optional AHRS roll/pitch)
+paths:
+  data_root: "~/Full_v5 - GPS-AHRS-IMU"   # o solo "~/Full_v5 - GPS-AHRS-IMU/data"
+
+extrinsics_path: "configs/extrinsics.json"
+
+# Frame names used by the estimator.
+# These must match the frame names in `extrinsics.json`.
+frames:
+  state_frame: "imu"   # X(i) lives in the IMU frame (IMU is co-located with LiDAR in this setup)
+  imu_frame: "imu"
+  gnss_frame: "gps"
+  ahrs_frame: "ahrs"
+
+sensors:
+  gnss0:
+    kind: "gnss"
+    frame_id: "gps"
+
+    # ENU reference point (choose a reasonable fixed point near your operating area)
+    ref_lat_deg: 36.023619907
+    ref_lon_deg: 129.378011880
+    ref_alt_m: 0.0
+    use_geoid_height_as_z: false
+
+    file:
+      path: "data/gps.txt"
+      delimiter: "\t" # tab: "\t" | space: " " | coma: ","
+      has_header: false
+      comment_prefix: null
+
+      time: { col: 0 }
+      time_format: { kind: "unix_seconds" }
+
+      columns:
+        gps_time_s:      { col: 1 }
+        lat_deg:         { col: 2 }
+        lat_hemi:        { col: 3 }
+        lon_deg:         { col: 4 }
+        lon_hemi:        { col: 5 }
+        heading_deg:     { col: 6, unit: "deg" }   # true-north heading from RTK baseline (if available)
+        quality:         { col: 7 }
+        n_sats:          { col: 8 }
+        hdop:            { col: 9 }
+        geoid_height_m:  { col: 10, unit: "m" }
+
+      require_monotonic_time: true
+      drop_nan_rows: true
+
+  imu0:
+    kind: "imu"
+    frame_id: "imu"
+
+    file:
+      path: "data/imu.txt"
+      delimiter: "\t" # tab: "\t" | space: " " | coma: ","
+      has_header: false
+      comment_prefix: null
+
+      time: { col: 0 }
+      time_format: { kind: "unix_seconds" }
+
+      columns:
+        wx: { col: 1, unit: "rad/s" }
+        wy: { col: 2, unit: "rad/s" }
+        wz: { col: 3, unit: "rad/s" }
+        ax: { col: 4, unit: "m/s^2" }
+        ay: { col: 5, unit: "m/s^2" }
+        az: { col: 6, unit: "m/s^2" }
+
+      require_monotonic_time: true
+      drop_nan_rows: true
+
+  # Optional: AHRS with quaternion + gyro + accel.
+  # We will only use it to correct roll/pitch (gravity direction). Yaw is ignored.
+  ahrs0:
+    kind: "ahrs"
+    frame_id: "ahrs"
+    orientation_convention: "world_T_sensor"   # or "sensor_T_world" depending on your logger
+    quaternion_order: "xyzw"                   # qx,qy,qz,qw
+    file:
+      path: "data/ahrs.txt"
+      delimiter: "\t" # tab: "\t" | space: " " | coma: ","
+      has_header: false
+      time: { col: 0 }
+      columns:
+        qx: { col: 1 }
+        qy: { col: 2 }
+        qz: { col: 3 }
+        qw: { col: 4 }
+        wx: { col: 5, unit: "rad/s" }
+        wy: { col: 6, unit: "rad/s" }
+        wz: { col: 7, unit: "rad/s" }
+        ax: { col: 8, unit: "m/s^2" }
+        ay: { col: 9, unit: "m/s^2" }
+        az: { col: 10, unit: "m/s^2" }
+        mx: { col: 11, unit: "uT" }
+        my: { col: 12, unit: "uT" }
+        mz: { col: 13, unit: "uT" }
+
+
+replay:
+  realtime: false
+  speedup: 20.0
+  max_steps: null
+
+estimator:
+  mode: "pose3_imu_preint"
+
+  gnss_gating:
+    enable: true
+    min_quality: 1
+    max_hdop: 2.5
+    min_sats: 8
+    enable_jump_check: true
+    max_jump_m: 25.0
+
+  noise:
+    sigma_xy_m: 2.0
+    sigma_z_m: 5.0
+    sigma_yaw_deg: 30.0
+
+    sigma_v0_m_s: 1.0
+    sigma_bias_acc_m_s2: 0.2
+    sigma_bias_gyro_rad_s: 0.05
+
+    sigma_bias_acc_rw_m_s2: 0.02
+    sigma_bias_gyro_rw_rad_s: 0.005
+
+    # AHRS roll/pitch correction strength (gravity direction).
+    sigma_roll_pitch_deg: 3.0
+
+  ahrs_fusion:
+    enable: true
+    max_age_s: 0.20
+
+    # yaw_mode:
+    #   - "off": roll/pitch only (recommended, matches the paper quote)
+    #   - "fallback_if_no_gnss_heading": use AHRS yaw only when GNSS heading is missing
+    yaw_mode: "off"
+    # yaw_mode: "fallback_if_no_gnss_heading"
+
+
+    # Optional constant offset (deg) to align AHRS yaw (magnetic) to your navigation yaw (true north).
+    # Only used when yaw_mode allows yaw.
+    yaw_offset_deg: 0.0
+
+    # Only used when yaw_mode == "fallback_if_no_gnss_heading"
+    sigma_yaw_deg: 30.0
+
+
+  imu_preintegration:
+    gravity_m_s2: 9.81
+    accel_noise_sigma: 0.1
+    gyro_noise_sigma: 0.01
+    integration_sigma: 1e-4
+    # bias_acc_cov_sigma: 0.1
+    # bias_gyro_cov_sigma: 0.01
+    max_dt_s: 0.05
+outputs:
+  out_dir: "outputs"
+  state_csv: "state_trace.csv"

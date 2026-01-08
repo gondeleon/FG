@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slamboat"
+version = "0.1.0"
+description = "Online factor-graph state estimation for a harbour vessel using GTSAM (GNSS+IMU, extensible)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Your Team" }]
+
+dependencies = [
+  "PyYAML>=6.0",
+  "pydantic>=2.0",
+  "numpy>=1.23",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "mypy>=1.5",
+  "ruff>=0.1.0",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+no_implicit_optional = true
+check_untyped_defs = true
+strict_optional = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
