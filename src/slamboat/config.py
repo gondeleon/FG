@@ -207,6 +207,71 @@ class GnssGatingSpec(BaseModel):
     enable_jump_check: bool = True
     max_jump_m: float = 25.0
 
+class LidarOdomKeyframesSpec(BaseModel):
+    """How LiDAR keyframes are selected/associated to estimator keyframes."""
+
+    mode: Literal["gnss", "fixed_period"] = "gnss"
+    period_s: float = 1.0
+    max_age_s: float = 0.25
+
+
+class LidarIcpSpec(BaseModel):
+    """ICP backend configuration (scan matching)."""
+
+    backend: Literal["open3d", "none"] = "open3d"
+    voxel_size_m: float = 0.25
+    max_corr_dist_m: float = 1.5
+    max_iters: int = 50
+
+
+class LidarGatingSpec(BaseModel):
+    """Quality gates for ICP results before inserting a factor."""
+
+    max_translation_m: Optional[float] = 3.0
+    max_rotation_deg: Optional[float] = 15.0
+    max_rmse_m: Optional[float] = 0.8
+    min_inlier_ratio: Optional[float] = 0.30
+    dt_min_s: Optional[float] = 0.0
+    dt_max_s: Optional[float] = 5.0
+
+
+class LidarOdomNoiseSpec(BaseModel):
+    """Base (diagonal) noise for LiDAR odometry BetweenFactorPose3."""
+
+    sigma_x_m: float = 0.30
+    sigma_y_m: float = 0.30
+    sigma_z_m: float = 0.50
+    sigma_roll_deg: float = 5.0
+    sigma_pitch_deg: float = 5.0
+    sigma_yaw_deg: float = 3.0
+    scale_with_rmse: bool = False
+
+
+class LidarOdomRobustSpec(BaseModel):
+    """Optional robust kernel for LiDAR odometry factors."""
+
+    enabled: bool = False
+    kernel: Literal["none", "huber", "cauchy"] = "huber"
+    param: float = 1.345
+
+
+class LidarOdomDebugSpec(BaseModel):
+    dump_csv: bool = True
+    csv_path: str = "outputs/lidar_icp_pairs.csv"
+
+
+class LidarOdometrySpec(BaseModel):
+    """LiDAR odometry / scan matching configuration."""
+
+    enabled: bool = False
+    keyframes: LidarOdomKeyframesSpec = Field(default_factory=LidarOdomKeyframesSpec)
+    icp: LidarIcpSpec = Field(default_factory=LidarIcpSpec)
+    gating: LidarGatingSpec = Field(default_factory=LidarGatingSpec)
+    noise: LidarOdomNoiseSpec = Field(default_factory=LidarOdomNoiseSpec)
+    robust: LidarOdomRobustSpec = Field(default_factory=LidarOdomRobustSpec)
+    debug: LidarOdomDebugSpec = Field(default_factory=LidarOdomDebugSpec)
+
+
 class EstimatorSpec(BaseModel):
     mode: Literal["pose3_imu_preint"] = "pose3_imu_preint"
     robust_kernel: RobustKernelSpec = Field(default_factory=RobustKernelSpec)
@@ -214,6 +279,7 @@ class EstimatorSpec(BaseModel):
     imu_preintegration: ImuPreintegrationSpec = Field(default_factory=ImuPreintegrationSpec)
     gnss_gating: GnssGatingSpec = Field(default_factory=GnssGatingSpec)
     ahrs_fusion: AhrsFusionSpec = Field(default_factory=AhrsFusionSpec)
+    lidar_odometry: LidarOdometrySpec = Field(default_factory=LidarOdometrySpec)
 
 
 class AppConfig(BaseModel):
