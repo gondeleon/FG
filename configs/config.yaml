@@ -148,7 +148,6 @@ estimator:
     # Only used when yaw_mode == "fallback_if_no_gnss_heading"
     sigma_yaw_deg: 30.0
 
-
   imu_preintegration:
     gravity_m_s2: 9.81
     accel_noise_sigma: 0.1
@@ -157,6 +156,47 @@ estimator:
     # bias_acc_cov_sigma: 0.1
     # bias_gyro_cov_sigma: 0.01
     max_dt_s: 0.05
+
+  lidar_odometry:
+    enabled: false
+
+    keyframes:
+      mode: gnss            # "gnss" | "fixed_period"
+      period_s: 1.0         # used if fixed_period
+      max_age_s: 0.25       # associate lidar event near keyframe time
+
+    icp:
+      backend: open3d       # "open3d" | "none"(mock)
+      voxel_size_m: 0.25
+      max_corr_dist_m: 1.5
+      max_iters: 50
+
+    gating:
+      max_translation_m: 3.0
+      max_rotation_deg: 15.0
+      max_rmse_m: 0.8
+      min_inlier_ratio: 0.30
+      dt_min_s: 0.0
+      dt_max_s: 5.0
+
+    noise:
+      sigma_x_m: 0.30
+      sigma_y_m: 0.30
+      sigma_z_m: 0.50
+      sigma_roll_deg: 5.0
+      sigma_pitch_deg: 5.0
+      sigma_yaw_deg: 3.0
+      scale_with_rmse: false
+
+    robust:
+      enabled: false
+      kernel: huber
+      param: 1.345
+
+    debug:
+      dump_csv: true
+      csv_path: outputs/lidar_icp_pairs.csv
+      
 outputs:
   out_dir: "outputs"
   state_csv: "state_trace.csv"
