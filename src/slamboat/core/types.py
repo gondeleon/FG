@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 
-SensorKind = Literal["gnss", "imu", "ahrs"]
+SensorKind = Literal["gnss", "imu", "ahrs", "lidar"]
 
 
 @dataclass(frozen=True)
@@ -80,11 +80,19 @@ class AhrsMessage(MessageBase):
 
 @dataclass(frozen=True)
 class LidarDeltaMessage(MessageBase):
-    # Relative motion from previous lidar keyframe to current (in lidar frame or base frame)
+    """Relative motion from lidar keyframe i->j.
+
+    Convention:
+      - Translation in meters.
+      - Angles in radians.
+      - Expressed in the *lidar_i* frame (i.e., i_T_j).
+    """
+    frame_id: str
     dx: float
     dy: float
     dz: float
     droll: float
     dpitch: float
     dyaw: float
+
 
