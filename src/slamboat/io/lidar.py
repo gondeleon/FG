@@ -44,6 +44,18 @@ class LidarDeltaReader(SensorReaderBase[LidarDeltaMessage]):
             def req_float(key: str) -> float:
                 s = DelimitedReader.get(row, self.spec.file.columns[key].col)
                 return float(DelimitedReader.parse_float(s))
+            
+            def opt_float(key: str) -> Optional[float]:
+                if key not in self.spec.file.columns:
+                    return None
+                s = DelimitedReader.get(row, self.spec.file.columns[key].col)
+                return float(DelimitedReader.parse_float(s))
+
+            def opt_int(key: str) -> Optional[int]:
+                if key not in self.spec.file.columns:
+                    return None
+                s = DelimitedReader.get(row, self.spec.file.columns[key].col)
+                return int(float(DelimitedReader.parse_float(s)))
 
             msg = LidarDeltaMessage(
                 t=float(t),
@@ -54,6 +66,13 @@ class LidarDeltaReader(SensorReaderBase[LidarDeltaMessage]):
                 droll=req_float("droll"),
                 dpitch=req_float("dpitch"),
                 dyaw=req_float("dyaw"),
+                rmse_m=opt_float("rmse_m"),
+                fitness=opt_float("fitness"),
+                inlier_ratio=opt_float("inlier_ratio"),
+                iterations=opt_int("iterations"),
+                correspondences=opt_int("correspondences"),
+                dt_s=opt_float("dt_s"),
+
             )
 
             if self.spec.file.drop_nan_rows and DelimitedReader.any_nan(

@@ -584,7 +584,7 @@ class OnlineEstimatorPose3ImuPreint:
 
         if kind == "lidar":
             # Buffer the latest lidar delta; it will be consumed when the next GNSS keyframe is created.
-            self._lidar_pending_delta = msg  # type: ignore[assignment]
+            self.lidar_pending_delta = msg  # type: ignore[assignment]
             return None
 
 
@@ -683,18 +683,18 @@ class OnlineEstimatorPose3ImuPreint:
         # --- LiDAR odometry factor (optional) ---
         lodom = getattr(self.cfg, "lidar_odometry", None)
         if lodom is not None and getattr(lodom, "enabled", False):
-            if self._lidar_pending_delta is not None:
+            if self.lidar_pending_delta is not None:
                 # Only use if close to this keyframe time
                 max_age = float(getattr(getattr(lodom, "keyframes", object()), "max_age_s", 0.25))
-                if abs(float(gnss.t) - float(self._lidar_pending_delta.t)) <= max_age:
+                if abs(float(gnss.t) - float(self.lidar_pending_delta.t)) <= max_age:
                     # Build 4x4 from delta (i_T_j in lidar_i frame)
                     import gtsam  # type: ignore
-                    dx = float(self._lidar_pending_delta.dx)
-                    dy = float(self._lidar_pending_delta.dy)
-                    dz = float(self._lidar_pending_delta.dz)
-                    droll = float(self._lidar_pending_delta.droll)
-                    dpitch = float(self._lidar_pending_delta.dpitch)
-                    dyaw = float(self._lidar_pending_delta.dyaw)
+                    dx = float(self.lidar_pending_delta.dx)
+                    dy = float(self.lidar_pending_delta.dy)
+                    dz = float(self.lidar_pending_delta.dz)
+                    droll = float(self.lidar_pending_delta.droll)
+                    dpitch = float(self.lidar_pending_delta.dpitch)
+                    dyaw = float(self.lidar_pending_delta.dyaw)
 
                     R = gtsam.Rot3.RzRyRx(droll, dpitch, dyaw)
                     t = gtsam.Point3(dx, dy, dz)
@@ -702,7 +702,29 @@ class OnlineEstimatorPose3ImuPreint:
 
                     # Convert Pose3 -> 4x4 for gating
                     T = delta_pose.matrix()
-                    metrics = IcpMetrics(dt_s=float(gnss.t - self._last_keyframe_t) if self._last_keyframe_t else None)
+                    # Metrics: use CSV-provided dt/rmse/fitness when available
+                    dt_s = None
+                    if getattr(self.lidar_pending_delta, "dt_s", None) is not None:
+                        dt_s = float(self.lidar_pending_delta.dt_s)  # type: ignore[arg-type]
+                    elif self.last_keyframe_t  is not None:
+                        dt_s = float(gnss.t - self.last_keyframe_t )
+
+                    rmse_m = getattr(self.lidar_pending_delta, "rmse_m", None)
+                    fitness = getattr(self.lidar_pending_delta, "fitness", None)
+                    inlier_ratio = getattr(self.lidar_pending_delta, "inlier_ratio", None)
+
+                    # If no explicit inlier_ratio, treat Open3D fitness as proxy
+                    if inlier_ratio is None and fitness is not None:
+                        inlier_ratio = fitness
+
+                    metrics = IcpMetrics(
+                        rmse_m=float(rmse_m) if rmse_m is not None else None,
+                        fitness=float(fitness) if fitness is not None else None,
+                        inlier_ratio=float(inlier_ratio) if inlier_ratio is not None else None,
+                        correspondences=getattr(self.lidar_pending_delta, "correspondences", None),
+                        iterations=getattr(self.lidar_pending_delta, "iterations", None),
+                        dt_s=dt_s,
+                    )
                     icp_res = IcpResult(delta_T=T, metrics=metrics)
 
                     ok, reasons, summary = gate_icp_result(icp_res, lodom.gating)
@@ -737,7 +759,7 @@ class OnlineEstimatorPose3ImuPreint:
                         log.warning("LiDAR odom rejected: i=%d j=%d reasons=%s summary=%s", self.i, j, reasons, summary)
 
                     # Consume the delta (do not reuse)
-                    self._lidar_pending_delta = None
+                    self.lidar_pending_delta = None
 
         self.isam.update(self.graph, self.initial)
         self.graph.resize(0)

@@ -98,6 +98,41 @@ sensors:
         my: { col: 12, unit: "uT" }
         mz: { col: 13, unit: "uT" }
 
+  # Optional: Lidar odometry as relative pose deltas.
+  # Used only if `estimator.lidar_odometry.enabled` is true.
+  lidar0:
+    kind: lidar
+    mode: odometry_delta
+    frame_id: lidar
+    file:
+      path: outputs/lidar_delta.csv
+      delimiter: ","
+      has_header: true
+      require_monotonic_time: true
+      drop_nan_rows: true
+
+      time: { col: t }
+      time_format: { kind: unix_seconds }
+
+      columns:
+        dx: { col: dx }
+        dy: { col: dy }
+        dz: { col: dz }
+        droll: { col: droll }
+        dpitch: { col: dpitch }
+        dyaw: { col: dyaw }
+
+        # opcionales (tu CSV los trae)
+        rmse_m: { col: rmse_m }
+        fitness: { col: fitness }
+        correspondences: { col: correspondences }
+        dt_s: { col: dt_s }
+        inlier_ratio:   { col: fitness }   # <- si no tienes columna inlier_ratio real
+
+      # opcionales pero útiles
+      require_monotonic_time: true
+      drop_nan_rows: true
+
 
 replay:
   realtime: false
@@ -158,7 +193,7 @@ estimator:
     max_dt_s: 0.05
 
   lidar_odometry:
-    enabled: false
+    enabled: true
 
     keyframes:
       mode: gnss            # "gnss" | "fixed_period"
@@ -174,8 +209,8 @@ estimator:
     gating:
       max_translation_m: 3.0
       max_rotation_deg: 15.0
-      max_rmse_m: 0.8
-      min_inlier_ratio: 0.30
+      max_rmse_m: 0.30
+      min_inlier_ratio: 0.50
       dt_min_s: 0.0
       dt_max_s: 5.0
 

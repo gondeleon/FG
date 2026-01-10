@@ -96,3 +96,11 @@ class LidarDeltaMessage(MessageBase):
     dyaw: float
 
 
+    # Optional ICP quality metrics (from offline ICP or online scan-matching)
+    rmse_m: Optional[float] = None
+    fitness: Optional[float] = None
+    inlier_ratio: Optional[float] = None
+    iterations: Optional[int] = None
+    correspondences: Optional[int] = None
+    dt_s: Optional[float] = None
+
