@@ -13,6 +13,7 @@ from slamboat.io.base import SensorReaderBase
 from slamboat.io.gnss import GnssReader
 from slamboat.io.imu import ImuReader
 from slamboat.io.ahrs import AhrsReader
+from slamboat.io.lidar import LidarDeltaReader
 
 
 def build_readers(sensors: Dict[str, SensorSpec]) -> Dict[str, Iterator]:
@@ -25,6 +26,8 @@ def build_readers(sensors: Dict[str, SensorSpec]) -> Dict[str, Iterator]:
             streams[name] = iter(ImuReader(spec))  # type: ignore[arg-type]
         elif spec.kind == "ahrs":
             streams[name] = iter(AhrsReader(spec))  # type: ignore[arg-type]
+        elif spec.kind == "lidar":
+            streams[name] = iter(LidarDeltaReader(spec))  # type: ignore[arg-type]
         else:
             raise ValueError(f"Unsupported sensor kind: {spec.kind}")
     return streams
