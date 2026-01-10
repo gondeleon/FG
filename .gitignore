@@ -44,3 +44,6 @@ docs/local/
 
 # local debugging
 lidar_plots/
+
+# local debug
+lidar_plots/
