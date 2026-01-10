@@ -41,3 +41,6 @@ datasets/
 .idea/
 docs/CONVERSATION_TEMPLATE.md
 docs/local/
+
+# local debugging
+lidar_plots/
