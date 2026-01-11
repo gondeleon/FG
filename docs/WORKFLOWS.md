@@ -14,7 +14,7 @@ Recommended pattern:
 
 ## Tagging milestones
 
-Use annotated tags:
+Use annotated tags "like":
 
 ```bash
 git tag -a v0.1.0-baseline -m "Baseline working"

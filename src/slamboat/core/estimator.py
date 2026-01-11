@@ -25,15 +25,17 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
 from slamboat.config import AhrsSpec, EstimatorSpec, NoiseSpec
 from slamboat.core.geo import LocalENU
 from slamboat.core.output import State3D
-from slamboat.core.types import AhrsMessage, GnssMessage, ImuMessage, MessageBase, SensorKind
+from slamboat.core.types import AhrsMessage, GnssMessage, ImuMessage, MessageBase, SensorKind, LidarDeltaMessage
 from slamboat.extrinsics import ExtrinsicsDB
+from slamboat.lidar.gating import gate_icp_result
+from slamboat.lidar.icp_types import IcpMetrics, IcpResult
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +114,10 @@ class OnlineEstimatorPose3ImuPreint:
         gnss_frame: str,
         ahrs_frame: str,
         ahrs_specs: Optional[list[AhrsSpec]] = None,
+        last_keyframe_t: Optional[float] = None,
+        lidar_pending_delta: Optional[LidarDeltaMessage] = None,
+        lidar_last_used_k: Optional[int] = None,
+
     ):
         require_gtsam()
         import gtsam  # type: ignore
@@ -127,6 +133,9 @@ class OnlineEstimatorPose3ImuPreint:
         self.ahrs_frame = ahrs_frame
         self.ahrs_specs = ahrs_specs or []
 
+        self.last_keyframe_t = last_keyframe_t
+        self.lidar_pending_delta = lidar_pending_delta
+        self.lidar_last_used_k = lidar_last_used_k
         # Precompute rigid transform between IMU(state) and GPS antenna frames
         # We need imu_T_gps so that: world_T_gps = world_T_imu * imu_T_gps
         self.imu_T_gps = self.extr.pose3(self.state_frame, self.gnss_frame)
@@ -370,6 +379,7 @@ class OnlineEstimatorPose3ImuPreint:
         self.pim.resetIntegrationAndSetBias(b0)
         self._pim_bias = b0
         self._bootstrapped = True
+        self.last_keyframe_t = gnss.t
 
     def _add_gps_factors(self, k: int, gps_pose, heading_available: bool) -> None:
         import gtsam  # type: ignore
@@ -573,15 +583,22 @@ class OnlineEstimatorPose3ImuPreint:
             return self._handle_gnss(msg, use_alt=use_alt)  # type: ignore[arg-type]
 
         if kind == "lidar":
-            # Placeholder: we intentionally do not integrate LiDAR yet.
-            # This hook keeps the Estimator interface stable when you later add LiDAR odometry factors.
-            log.debug("Received LiDAR message (not integrated yet).")
+            # Buffer the latest lidar delta; it will be consumed when the next GNSS keyframe is created.
+            self.lidar_pending_delta = msg  # type: ignore[assignment]
             return None
+
 
         raise ValueError(f"Unsupported kind: {kind}")
 
     def _handle_gnss(self, gnss: GnssMessage, use_alt: bool) -> Optional[State3D]:
         import gtsam  # type: ignore
+
+        # -------------------------
+        # GNSS gating (basic)
+        # -------------------------
+        # [Atencion ToDo]
+        # Esto no es fatal, pero puede producir comportamiento inconsistente (y logs confusos).
+        # Lo dejo para un commit posterior de limpieza, porque ahora estamos enfocados en LiDAR.
         if not self._gnss_passes_gating(gnss, use_alt=use_alt):
             # Reject this GNSS update: keep integrating IMU, do not create a keyframe.
             return None
@@ -663,6 +680,87 @@ class OnlineEstimatorPose3ImuPreint:
         # G(j) initial guess: measured gps pose
         self.initial.insert(self._G(j), gps_pose)
 
+        # --- LiDAR odometry factor (optional) ---
+        lodom = getattr(self.cfg, "lidar_odometry", None)
+        if lodom is not None and getattr(lodom, "enabled", False):
+            if self.lidar_pending_delta is not None:
+                # Only use if close to this keyframe time
+                max_age = float(getattr(getattr(lodom, "keyframes", object()), "max_age_s", 0.25))
+                if abs(float(gnss.t) - float(self.lidar_pending_delta.t)) <= max_age:
+                    # Build 4x4 from delta (i_T_j in lidar_i frame)
+                    import gtsam  # type: ignore
+                    dx = float(self.lidar_pending_delta.dx)
+                    dy = float(self.lidar_pending_delta.dy)
+                    dz = float(self.lidar_pending_delta.dz)
+                    droll = float(self.lidar_pending_delta.droll)
+                    dpitch = float(self.lidar_pending_delta.dpitch)
+                    dyaw = float(self.lidar_pending_delta.dyaw)
+
+                    R = gtsam.Rot3.RzRyRx(droll, dpitch, dyaw)
+                    t = gtsam.Point3(dx, dy, dz)
+                    delta_pose = gtsam.Pose3(R, t)
+
+                    # Convert Pose3 -> 4x4 for gating
+                    T = delta_pose.matrix()
+                    # Metrics: use CSV-provided dt/rmse/fitness when available
+                    dt_s = None
+                    if getattr(self.lidar_pending_delta, "dt_s", None) is not None:
+                        dt_s = float(self.lidar_pending_delta.dt_s)  # type: ignore[arg-type]
+                    elif self.last_keyframe_t  is not None:
+                        dt_s = float(gnss.t - self.last_keyframe_t )
+
+                    rmse_m = getattr(self.lidar_pending_delta, "rmse_m", None)
+                    fitness = getattr(self.lidar_pending_delta, "fitness", None)
+                    inlier_ratio = getattr(self.lidar_pending_delta, "inlier_ratio", None)
+
+                    # If no explicit inlier_ratio, treat Open3D fitness as proxy
+                    if inlier_ratio is None and fitness is not None:
+                        inlier_ratio = fitness
+
+                    metrics = IcpMetrics(
+                        rmse_m=float(rmse_m) if rmse_m is not None else None,
+                        fitness=float(fitness) if fitness is not None else None,
+                        inlier_ratio=float(inlier_ratio) if inlier_ratio is not None else None,
+                        correspondences=getattr(self.lidar_pending_delta, "correspondences", None),
+                        iterations=getattr(self.lidar_pending_delta, "iterations", None),
+                        dt_s=dt_s,
+                    )
+                    icp_res = IcpResult(delta_T=T, metrics=metrics)
+
+                    ok, reasons, summary = gate_icp_result(icp_res, lodom.gating)
+
+                    if ok:
+                        # Noise model (Pose3 order: [roll,pitch,yaw,x,y,z])
+                        def _d2r(d): return float(d) * math.pi / 180.0
+                        sig = np.array([
+                            _d2r(lodom.noise.sigma_roll_deg),
+                            _d2r(lodom.noise.sigma_pitch_deg),
+                            _d2r(lodom.noise.sigma_yaw_deg),
+                            float(lodom.noise.sigma_x_m),
+                            float(lodom.noise.sigma_y_m),
+                            float(lodom.noise.sigma_z_m),
+                        ], dtype=float)
+                        base = self.gtsam.noiseModel.Diagonal.Sigmas(sig)
+
+                        # Optional robust kernel
+                        model = base
+                        if getattr(lodom, "robust", None) is not None and lodom.robust.enabled:
+                            k = str(lodom.robust.kernel).lower()
+                            if k == "huber":
+                                ker = self.gtsam.noiseModel.mEstimator.Huber(float(lodom.robust.param))
+                                model = self.gtsam.noiseModel.Robust.Create(ker, base)
+                            elif k == "cauchy":
+                                ker = self.gtsam.noiseModel.mEstimator.Cauchy(float(lodom.robust.param))
+                                model = self.gtsam.noiseModel.Robust.Create(ker, base)
+
+                        self.graph.add(self.gtsam.BetweenFactorPose3(self._X(self.i), self._X(j), delta_pose, model))
+                        log.info("LiDAR odom accepted: i=%d j=%d trans=%.3f rot=%.3f", self.i, j, summary["trans_m"], summary["rot_deg"])
+                    else:
+                        log.warning("LiDAR odom rejected: i=%d j=%d reasons=%s summary=%s", self.i, j, reasons, summary)
+
+                    # Consume the delta (do not reuse)
+                    self.lidar_pending_delta = None
+
         self.isam.update(self.graph, self.initial)
         self.graph.resize(0)
         self.initial.clear()
@@ -672,5 +770,6 @@ class OnlineEstimatorPose3ImuPreint:
         pose_j, vel_j, bias_j = self._current_estimate()
         self.pim.resetIntegrationAndSetBias(bias_j)
         self._pim_bias = bias_j
+        self.last_keyframe_t = gnss.t
 
         return self._pose_to_state(gnss.t, pose_j, vel_j)
