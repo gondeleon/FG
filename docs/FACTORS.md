@@ -1,6 +1,6 @@
 # Factor Catalog
 
-This file documents the factor graph used in `slamboat`, including the measurement model, intent, and tuning knobs.
+This file documents the factor graph used in `slamboat`, including the measurement model, intent, tuning knobs, and failure modes.
 
 Notation:
 - `i` = previous keyframe, `j` = next keyframe
@@ -28,7 +28,7 @@ Preintegrated IMU increment computed from IMU samples between `t_i` and `t_j`.
   - `gravity_m_s2`
   - `accel_noise_sigma`, `gyro_noise_sigma`
   - `integration_sigma`
-  - `max_dt_s` (drop/reset integration on large dt)
+  - `max_dt_s`
 
 ### Failure modes
 - Timestamp gaps / resets → reset preintegration
@@ -67,9 +67,6 @@ Anchor the trajectory using GNSS position and (optional) heading.
 - `noise.sigma_xy_m`, `noise.sigma_z_m`, `noise.sigma_yaw_deg`
 - gating: `estimator.gnss_gating.*`
 
-### Notes
-- If heading is missing/unreliable, yaw sigma should be large.
-
 ## 4) Rigid link factor between state and GNSS
 
 ### Purpose
@@ -84,19 +81,13 @@ Express the GNSS antenna pose as the state pose composed with the lever arm.
 ### Factor
 - `BetweenFactorPose3(X(i), G(i), T_state_gps, Σ_rigid)` with very tight Σ.
 
-### Notes
-- This is the mechanism that allows putting GNSS priors on `G(i)` while estimating `X(i)`.
-
 ## 5) AHRS orientation prior (roll/pitch)
 
 ### Purpose
-Correct roll/pitch using gravity direction from AHRS (without trusting magnetic yaw).
+Correct roll/pitch using gravity direction from AHRS (without trusting magnetic yaw by default).
 
 ### Variables
 - `X(i)`
-
-### Measurement
-- AHRS quaternion at/near keyframe time.
 
 ### Factor
 - `PriorFactorPose3(X(i), z_ahrs, Σ_ahrs)` with:
@@ -105,22 +96,47 @@ Correct roll/pitch using gravity direction from AHRS (without trusting magnetic 
   - huge σ translation
 
 ### Tuning knobs
-- `noise.sigma_roll_pitch_deg`
 - `estimator.ahrs_fusion.*`:
   - `yaw_mode` (off / fallback_if_no_gnss_heading)
   - `max_age_s`
-  - optional `yaw_offset_deg` and `sigma_yaw_deg`
+  - optional `yaw_offset_deg`, `sigma_yaw_deg`
 
-## 6) Planned: LiDAR odometry / scan-matching
+## 6) LiDAR odometry / scan-matching (implemented - vertical slice)
 
-### Intended purpose
-Provide relative motion constraints when GNSS degrades.
+### Purpose
+Provide relative motion constraints that remain available when GNSS is degraded or absent.
 
-### Candidate factors
-- `BetweenFactorPose3(X(i), X(j), ΔT_lidar)`
-- robust kernels (Huber/Cauchy) with outlier rejection
+### Variables
+- `X(i), X(j)`
 
-### Tuning knobs (planned)
-- LiDAR odom covariance model
-- keyframe selection / downsampling
-- gating by ICP fitness
+### Measurement
+- Relative transform `ΔT_lidar = i_T_j` obtained from ICP between LiDAR keyframes (scan or submap).
+- Convention:
+  - translation in meters
+  - angles in radians
+  - `ΔT_lidar` expressed in the LiDAR frame at keyframe `i` (consistent with `LidarDeltaMessage`).
+
+### Factor
+- `BetweenFactorPose3(X(i), X(j), ΔT_lidar, Σ_lidar)`
+- Optional robust kernel: Huber/Cauchy wrapping the base diagonal noise.
+
+### Noise model
+- Start with fixed diagonal sigmas:
+  - `sigma_{x,y,z}_m`
+  - `sigma_{roll,pitch,yaw}_deg`
+- Future (optional): scale by ICP rmse/fitness.
+
+### Gating (outlier rejection)
+Config-driven thresholds:
+- `max_translation_m`
+- `max_rotation_deg`
+- `max_rmse_m`
+- `min_inlier_ratio`
+
+Notes:
+- When using Open3D ICP, `fitness` is treated as a proxy for inlier ratio if explicit inlier_ratio is unavailable.
+
+### Failure modes / gotchas
+- Wrong frame convention (using j_T_i instead of i_T_j) → catastrophic constraints.
+- Over-inserting highly correlated LiDAR factors (e.g., many per second without intermediate states) → overconfidence.
+- Large dt without sufficient overlap → ICP degeneracy (reject by gating).
