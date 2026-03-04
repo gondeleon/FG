@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 
-SensorKind = Literal["gnss", "imu", "ahrs", "lidar"]
+SensorKind = Literal["gnss", "imu", "ahrs", "lidar", "radar"]
 
 
 @dataclass(frozen=True)
@@ -104,3 +104,31 @@ class LidarDeltaMessage(MessageBase):
     correspondences: Optional[int] = None
     dt_s: Optional[float] = None
 
+@dataclass(frozen=True)
+class RadarDeltaMessage(MessageBase):
+    """Relative motion from radar keyframe i->j.
+
+    Convention (same as LiDAR delta):
+        - Translation in meters.
+        - Angles in radians.
+        - Expressed in the *radar_i* frame (i.e., i_T_j).
+
+    Notes:
+        - `band` distinguishes X-band / W-band pipelines.
+        - `quality` is optional and can be used to scale covariance (worse quality -> larger sigmas).
+    """
+    frame_id: str
+    band: Literal["xband", "wband"]
+
+    dx: float
+    dy: float
+    dz: float
+    droll: float
+    dpitch: float
+    dyaw: float
+
+    # Optional metrics
+    quality: Optional[float] = None
+    rmse_m: Optional[float] = None
+    inlier_ratio: Optional[float] = None
+    dt_s: Optional[float] = None

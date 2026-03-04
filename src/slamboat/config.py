@@ -10,7 +10,7 @@ The estimator should not need code changes when the physical setup changes.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Literal, Optional, Union
+from typing import Dict, Literal, Optional, Union, Mapping
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -112,7 +112,65 @@ class LidarSpec(BaseModel):
     mode: Literal["odometry_delta"] = "odometry_delta"
     file: DelimitedFileSpec
 
-SensorSpec = Union[GnssSpec, ImuSpec, AhrsSpec, LidarSpec]
+class RadarSpec(BaseModel):
+    kind: Literal["radar"] = "radar"
+    frame_id: str = "radar"
+
+    # For now: CSV of relative pose constraints (odometry output)
+    mode: Literal["odometry_delta"] = "odometry_delta"
+    file: DelimitedFileSpec
+
+
+SensorSpec = Union[GnssSpec, ImuSpec, AhrsSpec, LidarSpec, RadarSpec]
+
+
+class RadarGatingSpec(BaseModel):
+    """Kinematic gating for radar deltas before inserting a factor."""
+    v_max_mps: float = 12.0
+    yaw_rate_max_dps: float = 25.0
+
+
+class RadarQualityScalingSpec(BaseModel):
+    """Scale covariance based on an optional [0..1] quality score."""
+    enabled: bool = True
+    q_low: float = 0.2
+    q_high: float = 0.9
+    alpha_low: float = 6.0   # worse quality -> larger alpha
+    alpha_high: float = 1.0  # best quality -> alpha ~ 1
+
+
+class RadarOdomNoiseSpec(BaseModel):
+    """Base (diagonal) noise for Radar odometry BetweenFactorPose3."""
+    sigma_x_m: float = 0.50
+    sigma_y_m: float = 0.50
+    sigma_z_m: float = 1.50
+    sigma_roll_deg: float = 5.0
+    sigma_pitch_deg: float = 5.0
+    sigma_yaw_deg: float = 3.0
+
+
+class RadarOdomRobustSpec(BaseModel):
+    """Optional robust kernel for Radar odometry factors."""
+    enabled: bool = False
+    kernel: Literal["none", "huber", "cauchy"] = "huber"
+    param: float = 1.345
+
+
+class RadarBandSpec(BaseModel):
+    """Per-band radar odometry configuration."""
+    noise: RadarOdomNoiseSpec = Field(default_factory=RadarOdomNoiseSpec)
+    gating: RadarGatingSpec = Field(default_factory=RadarGatingSpec)
+    quality_scaling: RadarQualityScalingSpec = Field(default_factory=RadarQualityScalingSpec)
+    robust: RadarOdomRobustSpec = Field(default_factory=RadarOdomRobustSpec)
+
+
+class RadarOdometrySpec(BaseModel):
+    """Radar odometry configuration (per band)."""
+    enabled: bool = False
+    max_age_s: float = 0.25
+
+    # Expect keys: "xband", "wband"
+    bands: Dict[str, RadarBandSpec] = Field(default_factory=dict)
 
 class RobustKernelSpec(BaseModel):
     kind: Literal["none", "huber", "cauchy"] = "huber"
@@ -280,6 +338,7 @@ class EstimatorSpec(BaseModel):
     gnss_gating: GnssGatingSpec = Field(default_factory=GnssGatingSpec)
     ahrs_fusion: AhrsFusionSpec = Field(default_factory=AhrsFusionSpec)
     lidar_odometry: LidarOdometrySpec = Field(default_factory=LidarOdometrySpec)
+    radar_odometry: RadarOdometrySpec = Field(default_factory=RadarOdometrySpec)
 
 
 class AppConfig(BaseModel):

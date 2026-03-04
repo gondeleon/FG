@@ -32,7 +32,7 @@ import numpy as np
 from slamboat.config import AhrsSpec, EstimatorSpec, NoiseSpec
 from slamboat.core.geo import LocalENU
 from slamboat.core.output import State3D
-from slamboat.core.types import AhrsMessage, GnssMessage, ImuMessage, MessageBase, SensorKind, LidarDeltaMessage
+from slamboat.core.types import AhrsMessage, GnssMessage, ImuMessage, MessageBase, SensorKind, LidarDeltaMessage, RadarDeltaMessage
 from slamboat.extrinsics import ExtrinsicsDB
 from slamboat.lidar.gating import gate_icp_result
 from slamboat.lidar.icp_types import IcpMetrics, IcpResult
@@ -117,6 +117,7 @@ class OnlineEstimatorPose3ImuPreint:
         last_keyframe_t: Optional[float] = None,
         lidar_pending_delta: Optional[LidarDeltaMessage] = None,
         lidar_last_used_k: Optional[int] = None,
+        radar_pending_delta: Optional[RadarDeltaMessage] = None,
 
     ):
         require_gtsam()
@@ -136,6 +137,8 @@ class OnlineEstimatorPose3ImuPreint:
         self.last_keyframe_t = last_keyframe_t
         self.lidar_pending_delta = lidar_pending_delta
         self.lidar_last_used_k = lidar_last_used_k
+        self.radar_pending_delta = radar_pending_delta
+
         # Precompute rigid transform between IMU(state) and GPS antenna frames
         # We need imu_T_gps so that: world_T_gps = world_T_imu * imu_T_gps
         self.imu_T_gps = self.extr.pose3(self.state_frame, self.gnss_frame)
@@ -587,6 +590,10 @@ class OnlineEstimatorPose3ImuPreint:
             self.lidar_pending_delta = msg  # type: ignore[assignment]
             return None
 
+        if kind == "radar":
+            # Buffer the latest radar delta; it will be consumed when the next GNSS keyframe is created.
+            self.radar_pending_delta = msg  # type: ignore[assignment]
+            return None
 
         raise ValueError(f"Unsupported kind: {kind}")
 
@@ -760,6 +767,141 @@ class OnlineEstimatorPose3ImuPreint:
 
                     # Consume the delta (do not reuse)
                     self.lidar_pending_delta = None
+      
+        # --- Radar odometry factor (optional; X/W bands) ---
+        rodom = getattr(getattr(self.cfg, "estimator", object()), "radar_odometry", None)        
+        if rodom is not None and getattr(rodom, "enabled", False):
+            if self.radar_pending_delta is not None:
+                # only use if close to this keyframe time
+                max_age = float(getattr(rodom, "max_age_s", 0.25))
+                if abs(float(gnss.t) - float(self.radar_pending_delta.t)) <= max_age:
+                    import gtsam  # type: ignore
+
+                    band = str(self.radar_pending_delta.band).lower()
+                    if band not in ("xband", "wband"):
+                        log.warning("Radar odom rejected: invalid band=%s", band)
+                    else:
+                        # Select band spec (must exist in config)
+                        bspec = None
+                        try:
+                            bspec = rodom.bands[band]
+                        except Exception:
+                            bspec = None
+                        if bspec is None:
+                            log.warning("Radar odom rejected: missing config for band=%s", band)
+                        else:
+                            # Build Pose3 from delta (i_T_j in radar_i frame)
+                            dx = float(self.radar_pending_delta.dx)
+                            dy = float(self.radar_pending_delta.dy)
+                            dz = float(self.radar_pending_delta.dz)
+                            droll = float(self.radar_pending_delta.droll)
+                            dpitch = float(self.radar_pending_delta.dpitch)
+                            dyaw = float(self.radar_pending_delta.dyaw)
+
+                            R = gtsam.Rot3.RzRyRx(droll, dpitch, dyaw)
+                            t = gtsam.Point3(dx, dy, dz)
+                            delta_pose = gtsam.Pose3(R, t)
+
+                            # dt estimate: prefer msg.dt_s, else gnss delta
+                            dt_s = None
+                            if getattr(self.radar_pending_delta, "dt_s", None) is not None:
+                                dt_s = float(self.radar_pending_delta.dt_s)  # type: ignore[arg-type]
+                            elif self.last_keyframe_t is not None:
+                                dt_s = float(gnss.t - self.last_keyframe_t)
+
+                            # --- cleaning & gating ---
+                            ok = True
+                            reasons = []
+
+                            if dt_s is None or not _finite(dt_s) or float(dt_s) <= 0.0:
+                                ok = False
+                                reasons.append("bad_dt")
+
+                            trans_m = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+                            rot_deg = abs(float(dyaw)) * 180.0 / math.pi  # yaw-only rate gate (pragmatic)
+
+                            if ok:
+                                v = trans_m / float(dt_s)
+                                yaw_rate = rot_deg / float(dt_s)
+
+                                gcfg = getattr(bspec, "gating", None)
+                                v_max = float(getattr(gcfg, "v_max_mps", 1e9))
+                                yr_max = float(getattr(gcfg, "yaw_rate_max_dps", 1e9))
+
+                                if v > v_max:
+                                    ok = False
+                                    reasons.append(f"v>{v_max:.3f}")
+                                if yaw_rate > yr_max:
+                                    ok = False
+                                    reasons.append(f"yaw_rate>{yr_max:.3f}")
+
+                            # --- noise model (diagonal)  optional quality scaling ---
+                            if ok:
+                                def _d2r(d): return float(d) * math.pi / 180.0
+                                ncfg = getattr(bspec, "noise", None)
+                                sig = np.array([
+                                    _d2r(getattr(ncfg, "sigma_roll_deg", 5.0)),
+                                    _d2r(getattr(ncfg, "sigma_pitch_deg", 5.0)),
+                                    _d2r(getattr(ncfg, "sigma_yaw_deg", 3.0)),
+                                    float(getattr(ncfg, "sigma_x_m", 0.5)),
+                                    float(getattr(ncfg, "sigma_y_m", 0.5)),
+                                    float(getattr(ncfg, "sigma_z_m", 1.5)),
+                                ], dtype=float)
+
+                                base = self.gtsam.noiseModel.Diagonal.Sigmas(sig)
+
+                                # quality scaling: alpha(q) multiplies sigmas
+                                qcfg = getattr(bspec, "quality_scaling", None)
+                                alpha = 1.0
+                                q = getattr(self.radar_pending_delta, "quality", None)
+                                if qcfg is not None and getattr(qcfg, "enabled", False) and q is not None and _finite(q):
+                                    q = float(q)
+                                    q_low = float(getattr(qcfg, "q_low", 0.2))
+                                    q_high = float(getattr(qcfg, "q_high", 0.9))
+                                    a_low = float(getattr(qcfg, "alpha_low", 6.0))
+                                    a_high = float(getattr(qcfg, "alpha_high", 1.0))
+
+                                    # clamp
+                                    if q <= q_low:
+                                        alpha = a_low
+                                    elif q >= q_high:
+                                        alpha = a_high
+                                    else:
+                                        # linear interpolation between (q_low,a_low) and (q_high,a_high)
+                                        w = (q - q_low) / max(1e-12, (q_high - q_low))
+                                        alpha = (1.0 - w) * a_low + w * a_high
+
+
+                                model = base
+                                if abs(alpha - 1.0) > 1e-12:
+                                    model = self.gtsam.noiseModel.Diagonal.Sigmas(sig * float(alpha))
+
+                                # robust kernel optional
+                                rcfg = getattr(bspec, "robust", None)
+                                if rcfg is not None and getattr(rcfg, "enabled", False):
+                                    kname = str(getattr(rcfg, "kernel", "huber")).lower()
+                                    param = float(getattr(rcfg, "param", 1.0))
+                                    if kname == "huber":
+                                        ker = self.gtsam.noiseModel.mEstimator.Huber(param)
+                                        model = self.gtsam.noiseModel.Robust.Create(ker, model)
+                                    elif kname == "cauchy":
+                                        ker = self.gtsam.noiseModel.mEstimator.Cauchy(param)
+                                        model = self.gtsam.noiseModel.Robust.Create(ker, model)
+
+                                self.graph.add(self.gtsam.BetweenFactorPose3(self._X(self.i), self._X(j), delta_pose, model))
+                                log.info(
+                                    "Radar odom accepted: band=%s i=%d j=%d trans=%.3f rotYaw=%.3f dt=%.3f alpha=%.3f",
+                                    band, self.i, j, trans_m, rot_deg, float(dt_s), float(alpha)
+                                )
+                            else:
+                                log.warning(
+                                    "Radar odom rejected: band=%s i=%d j=%d reasons=%s trans=%.3f rotYaw=%.3f dt=%s",
+                                    band, self.i, j, reasons, trans_m, rot_deg, dt_s
+                                )
+
+                    # consume regardless (do not reuse)
+                    self.radar_pending_delta = None
 
         self.isam.update(self.graph, self.initial)
         self.graph.resize(0)
