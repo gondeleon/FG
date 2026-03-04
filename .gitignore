@@ -61,3 +61,6 @@ outputs/
 
 # OSM cache (do not commit)
 src/slamboat/osm/cache_aoi/
+
+# Local one-off scripts
+scripts/local/
