@@ -35,7 +35,7 @@ class Dispatcher:
         streams: Dict[str, Iterator[MessageBase]],
         kinds: Dict[str, SensorKind],
         realtime: bool = False,
-        speedup: float = 20.0,
+        speedup: float = 1.0,
         max_steps: Optional[int] = None,
     ):
         self.streams = streams

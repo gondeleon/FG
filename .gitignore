@@ -47,3 +47,23 @@ lidar_plots/
 
 # local debug
 lidar_plots/
+
+# Local datasets (do not commit)
+data_MOANA/
+data_POHANG/
+
+# Local site configs & extrinsics (do not commit)
+configs/config_*.yaml
+configs/extrinsics_*.json
+
+# Local outputs
+outputs/
+
+# OSM cache (do not commit)
+src/slamboat/osm/cache_aoi/
+
+# Local one-off scripts
+scripts/local/
+
+# Local OSM/AOI cache
+.OSM/

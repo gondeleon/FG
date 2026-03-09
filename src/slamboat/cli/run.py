@@ -17,7 +17,7 @@ def _setup_logging() -> None:
 
 def main() -> int:
     _setup_logging()
-    ap = argparse.ArgumentParser(description="slamboat: GNSS+IMU online SLAM (offline replay).")
+    ap = argparse.ArgumentParser(description="slamboat: online SLAM (offline replay).")
     ap.add_argument("--config", required=True, help="Path to config.yaml")
     args = ap.parse_args()
 
