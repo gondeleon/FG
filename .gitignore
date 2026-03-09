@@ -64,3 +64,6 @@ src/slamboat/osm/cache_aoi/
 
 # Local one-off scripts
 scripts/local/
+
+# Local OSM/AOI cache
+.OSM/

@@ -203,8 +203,7 @@ def sigmoid(z: np.ndarray) -> np.ndarray:
 
 
 def build_cfar_mask_and_weight(
-    I: np.ndarray, training: int, guard: int, k: float, soft_tau: float
-) -> Tuple[np.ndarray, np.ndarray]:
+    I: np.ndarray, training: int, guard: int, k: float, soft_tau: float) -> Tuple[np.ndarray, np.ndarray]:
     """Per-azimuth CA-CFAR along range; returns (mask, weight in [0,1])."""
     H, W = I.shape
     mask = np.zeros((H, W), dtype=bool)
@@ -231,8 +230,7 @@ def polar_indices_to_points(
     min_range_m: float,
     max_range_m: float,
     max_points: int,
-    mirror_x: bool,
-) -> np.ndarray:
+    mirror_x: bool,) -> np.ndarray:
     """Convert selected polar bins -> (x,y,0) points. Picks up to max_points by weight."""
     H, W = mask.shape
     dr = float(R_max_m) / float(W)
@@ -404,10 +402,10 @@ def interp_pose(poses: List[Pose2D], t: float) -> Pose2D:
 
 @dataclass
 class Sim2:
-    s: float = 1.0
+    s:   float = 1.0
     yaw: float = 0.0  # rad
-    tx: float = 0.0
-    ty: float = 0.0
+    tx:  float = 0.0
+    ty:  float = 0.0
 
     @staticmethod
     def from_json(path: Path) -> "Sim2":
